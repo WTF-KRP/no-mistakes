@@ -1,3 +1,0 @@
-ok  	github.com/kunchenguid/no-mistakes/internal/pipeline/steps	152.591s
-ok  	github.com/kunchenguid/no-mistakes/internal/pipeline/steps/citest	16.678s
-?   	github.com/kunchenguid/no-mistakes/internal/pipeline/steps/internal/stepstest	[no test files]

@@ -222,6 +222,80 @@ func main() {
 	}
 }
 
+func TestExecutor_AgentCrashRetryDoesNotRetryRejectedCodexAfterFallbackCrash(t *testing.T) {
+	dir := t.TempDir()
+	source := filepath.Join(dir, "codex.go")
+	bin := filepath.Join(dir, "codex.exe")
+	attempts := filepath.Join(dir, "attempts")
+	const fakeCodex = `package main
+import (
+ "fmt"
+ "os"
+)
+func main() {
+ f, err := os.OpenFile(os.Getenv("NM_TEST_CODEX_ATTEMPTS"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
+ if err != nil { panic(err) }
+ if _, err := f.WriteString("attempt\n"); err != nil { panic(err) }
+ if err := f.Close(); err != nil { panic(err) }
+ fmt.Fprintln(os.Stderr, "Invalid json schema: unsupported array")
+ os.Exit(1)
+}
+`
+	if err := os.WriteFile(source, []byte(fakeCodex), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if output, err := exec.Command("go", "build", "-o", bin, source).CombinedOutput(); err != nil {
+		t.Fatalf("build fake Codex: %v\n%s", err, output)
+	}
+	codex, err := agent.New(types.AgentCodex, bin, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondCalls := 0
+	second := &hangingAgent{name: "second", runFn: func(context.Context, agent.RunOpts) (*agent.Result, error) {
+		secondCalls++
+		return nil, processExitError{"second exited: fallback crash diagnostic"}
+	}}
+	database, p, _, repo := setupTest(t)
+	work := t.TempDir()
+	initGitRepo(t, work)
+	head, err := git.HeadSHA(context.Background(), work)
+	if err != nil {
+		t.Fatal(err)
+	}
+	run, err := database.InsertRun(repo.ID, "codex-fallback-crash", head, head)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stepCalls := 0
+	step := &adaptiveCallStep{name: types.StepReview, fn: func(sctx *StepContext) (*StepOutcome, error) {
+		stepCalls++
+		_, err := sctx.RunAgent(agent.RunOpts{
+			CWD: work, Prompt: "review",
+			JSONSchema: []byte(`{"type":"object","properties":{"findings":{"type":"array"}}}`),
+			Env:        []string{"NM_TEST_CODEX_ATTEMPTS=" + attempts},
+		})
+		if !agent.IsTerminalProviderError(err) {
+			t.Errorf("RunAgent error = %v, want terminal provider error", err)
+		}
+		return &StepOutcome{}, err
+	}}
+	executor := NewExecutor(database, p, &config.Config{AgentCrashRetries: 1}, agent.NewFallback([]agent.Agent{codex, second}), []Step{step}, nil)
+	execErr := executor.Execute(context.Background(), run, repo, work)
+	for _, diagnostic := range []string{"codex structured-output incompatibility", "second exited: fallback crash diagnostic"} {
+		if execErr == nil || !strings.Contains(execErr.Error(), diagnostic) || !strings.Contains(errString(executor, run.ID), diagnostic) {
+			t.Errorf("diagnostic %q lost: error=%v persisted=%s", diagnostic, execErr, errString(executor, run.ID))
+		}
+	}
+	data, err := os.ReadFile(attempts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stepCalls != 1 || secondCalls != 1 || string(data) != "attempt\n" {
+		t.Fatalf("schema rejection spent crash retries: step calls=%d fallback calls=%d Codex attempts=%q", stepCalls, secondCalls, data)
+	}
+}
+
 func boolInt(value bool) int {
 	if value {
 		return 1

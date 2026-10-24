@@ -102,7 +102,15 @@ func (a *fallbackAgent) NeutralizesGateInstructions() bool {
 	return true
 }
 
-func (a *fallbackAgent) Run(ctx context.Context, opts RunOpts) (*Result, error) {
+func (a *fallbackAgent) Run(ctx context.Context, opts RunOpts) (result *Result, err error) {
+	var terminalErr error
+	defer func() {
+		// A configured fallback may succeed, but a later failure must not
+		// hide a terminal provider error and let crash retries replay it.
+		if err != nil && terminalErr != nil && !errors.Is(err, terminalErr) {
+			err = errors.Join(terminalErr, err)
+		}
+	}()
 	start := int(a.position.Load())
 	candidates := a.agents[start:]
 	var sessionAgent Agent
@@ -171,6 +179,9 @@ func (a *fallbackAgent) Run(ctx context.Context, opts RunOpts) (*Result, error) 
 			return result, nil
 		}
 		lastErr = err
+		if terminalErr == nil && IsTerminalProviderError(err) {
+			terminalErr = err
+		}
 		// A fallback is another attempt inside this invocation's existing
 		// bounded context, not a fresh timeout policy. Once that context has
 		// expired or been cancelled, the next candidate cannot start

@@ -97,11 +97,14 @@ func TestCodexAgent_SchemaRejectionUsesConfiguredFallback(t *testing.T) {
 	for _, tc := range []struct {
 		name     string
 		fallback bool
+		crash    bool
 		options  []FallbackOption
 	}{
 		{name: "configured fallback", fallback: true},
+		{name: "crashing fallback", fallback: true, crash: true},
 		{name: "single agent"},
 		{name: "quota-aware fallback", fallback: true, options: []FallbackOption{WithQuotaSwitch("")}},
+		{name: "quota-aware crashing fallback", fallback: true, crash: true, options: []FallbackOption{WithQuotaSwitch("")}},
 		{name: "quota-aware single agent", options: []FallbackOption{WithQuotaSwitch("")}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -112,6 +115,9 @@ func TestCodexAgent_SchemaRejectionUsesConfiguredFallback(t *testing.T) {
 			second := &fallbackTestAgent{
 				name: "second",
 				run: func() (*Result, error) {
+					if tc.crash {
+						return nil, errors.New("second exited: fallback crash diagnostic")
+					}
 					return &Result{Output: []byte(reviewOutput)}, nil
 				},
 			}
@@ -130,7 +136,7 @@ func TestCodexAgent_SchemaRejectionUsesConfiguredFallback(t *testing.T) {
 			if len(attempts) == 0 || attempts[0].Agent != "codex" || !IsTerminalProviderError(attempts[0].Err) || IsStructuredOutputRejected(attempts[0].Err) {
 				t.Fatalf("first attempt = %+v, want terminal Codex provider rejection", attempts)
 			}
-			if tc.fallback {
+			if tc.fallback && !tc.crash {
 				if err != nil || result == nil || string(result.Output) != reviewOutput || result.Provider != "second" {
 					t.Fatalf("Run = (%+v, %v), want completed fallback review", result, err)
 				}
@@ -142,8 +148,18 @@ func TestCodexAgent_SchemaRejectionUsesConfiguredFallback(t *testing.T) {
 				if !errors.As(err, &incompatibility) || !strings.Contains(err.Error(), "codex structured-output incompatibility") || !strings.Contains(err.Error(), "Invalid json schema:") {
 					t.Fatalf("Run error = %v, want named schema incompatibility and provider diagnostic", err)
 				}
-				if len(attempts) != 1 || second.calls != 0 {
-					t.Fatalf("attempts = %+v, fallback calls = %d, want one terminal attempt", attempts, second.calls)
+				if !IsTerminalProviderError(err) {
+					t.Fatalf("Run error = %v, want terminal provider error", err)
+				}
+				wantAttempts, wantSecondCalls := 1, 0
+				if tc.crash {
+					wantAttempts, wantSecondCalls = 2, 1
+					if !strings.Contains(err.Error(), "second exited: fallback crash diagnostic") {
+						t.Fatalf("Run error = %v, want fallback crash diagnostic preserved", err)
+					}
+				}
+				if len(attempts) != wantAttempts || second.calls != wantSecondCalls {
+					t.Fatalf("attempts = %+v, fallback calls = %d, want %d/%d", attempts, second.calls, wantAttempts, wantSecondCalls)
 				}
 			}
 		})

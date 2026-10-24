@@ -465,6 +465,9 @@ User-supplied flags are normally inserted ahead of no-mistakes' managed flags, s
 | `antigravity` | `--dangerously-skip-permissions`, `--print`, `--json-schema`, `--output-format`, `--conversation`, `-c`, `--continue` |
 
 For structured `codex` runs, no-mistakes also appends its own `--output-schema <tempfile>` after your overrides. Treat that flag as managed even though config validation does not currently reject it.
+
+The selected Codex profile/model's provider must accept that schema. A recognized provider schema rejection fails with `codex structured-output incompatibility` and preserves the provider diagnostic. It is terminal for adapter, review-analyzer, and automatic crash retries. Review is neither skipped nor retried without the schema. Select a compatible Codex profile/model or configure a different agent route, then rerun the pipeline so review can complete. A profile that works for plain prompts, such as Rebase, can still reject structured review requests.
+
 The Claude, Codex, Grok, Pi, and Antigravity session-control forms are reserved so no-mistakes can keep review-loop conversations deterministic: review turns stay session-free while the fixer keeps its own isolated durable session.
 
 Smart defaults:

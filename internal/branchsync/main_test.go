@@ -23,6 +23,9 @@ func TestMain(m *testing.M) {
 	// `git config` spawns per repository were ~8% of the package's git.exe
 	// spawns, which set its Windows wall time.
 	identity := "[core]\n\tautocrlf = false\n[user]\n\temail = test@example.com\n\tname = Test User\n"
+	// Cached repositories must stay immutable while parallel tests copy them.
+	// Detached automatic maintenance can remove a lock during os.CopyFS.
+	identity += "[maintenance]\n\tauto = false\n"
 	if err := os.WriteFile(globalConfig, []byte(identity), 0o644); err != nil {
 		panic(err)
 	}

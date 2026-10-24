@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"sync/atomic"
@@ -220,6 +221,10 @@ func (a *fallbackAgent) Close() error {
 func isAgentUnavailableError(err error) bool {
 	if err == nil || IsStructuredOutputRejected(err) {
 		return false
+	}
+	var incompatibility *codexSchemaIncompatibility
+	if errors.As(err, &incompatibility) {
+		return true
 	}
 	msg := strings.ToLower(err.Error())
 	unavailable := []string{

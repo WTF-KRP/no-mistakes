@@ -93,6 +93,63 @@ func TestCodexRejectsOutputSchema(t *testing.T) {
 	}
 }
 
+func TestCodexAgent_SchemaRejectionUsesConfiguredFallback(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		fallback bool
+		options  []FallbackOption
+	}{
+		{name: "configured fallback", fallback: true},
+		{name: "single agent"},
+		{name: "quota-aware fallback", fallback: true, options: []FallbackOption{WithQuotaSwitch("")}},
+		{name: "quota-aware single agent", options: []FallbackOption{WithQuotaSwitch("")}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			bin := writeFakeCodex(t, dir, "#!/bin/sh\nprintf '%s\\n' \"$CODEX_FAILURE\" >&2\nexit 1\n",
+				"@echo off\r\necho %CODEX_FAILURE% >&2\r\nexit /b 1\r\n")
+			const reviewOutput = `{"findings":[],"summary":"review complete"}`
+			second := &fallbackTestAgent{
+				name: "second",
+				run: func() (*Result, error) {
+					return &Result{Output: []byte(reviewOutput)}, nil
+				},
+			}
+			agents := []Agent{&codexAgent{bin: bin, extraArgs: []string{"-p", "deepseek"}}}
+			if tc.fallback {
+				agents = append(agents, second)
+			}
+			var attempts []Attempt
+			result, err := NewFallback(agents, tc.options...).Run(context.Background(), RunOpts{
+				Prompt:     "review",
+				CWD:        dir,
+				JSONSchema: json.RawMessage(`{"type":"object","properties":{"findings":{"type":"array","items":{"type":"object"}},"summary":{"type":"string"}},"required":["findings","summary"]}`),
+				Env:        []string{"CODEX_FAILURE=" + codexRejectedArraySchema},
+				OnAttempt:  func(attempt Attempt) { attempts = append(attempts, attempt) },
+			})
+			if len(attempts) == 0 || attempts[0].Agent != "codex" || !IsTerminalProviderError(attempts[0].Err) || IsStructuredOutputRejected(attempts[0].Err) {
+				t.Fatalf("first attempt = %+v, want terminal Codex provider rejection", attempts)
+			}
+			if tc.fallback {
+				if err != nil || result == nil || string(result.Output) != reviewOutput || result.Provider != "second" {
+					t.Fatalf("Run = (%+v, %v), want completed fallback review", result, err)
+				}
+				if len(attempts) != 2 || second.calls != 1 || attempts[1].Agent != "second" || attempts[1].Err != nil {
+					t.Fatalf("attempts = %+v, fallback calls = %d, want one call per agent", attempts, second.calls)
+				}
+			} else {
+				var incompatibility *codexSchemaIncompatibility
+				if !errors.As(err, &incompatibility) || !strings.Contains(err.Error(), "codex structured-output incompatibility") || !strings.Contains(err.Error(), "Invalid json schema:") {
+					t.Fatalf("Run error = %v, want named schema incompatibility and provider diagnostic", err)
+				}
+				if len(attempts) != 1 || second.calls != 0 {
+					t.Fatalf("attempts = %+v, fallback calls = %d, want one terminal attempt", attempts, second.calls)
+				}
+			}
+		})
+	}
+}
+
 func TestCodexAgent_SchemaRejectionRequiresOutputSchema(t *testing.T) {
 	dir := t.TempDir()
 	bin := writeFakeCodex(t, dir, "#!/bin/sh\nprintf '%s\\n' \"$CODEX_FAILURE\" >&2\nexit 1\n",

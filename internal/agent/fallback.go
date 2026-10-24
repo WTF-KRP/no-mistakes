@@ -103,12 +103,10 @@ func (a *fallbackAgent) NeutralizesGateInstructions() bool {
 }
 
 func (a *fallbackAgent) Run(ctx context.Context, opts RunOpts) (result *Result, err error) {
-	var terminalErr error
+	var schemaErr error
 	defer func() {
-		// A configured fallback may succeed, but a later failure must not
-		// hide a terminal provider error and let crash retries replay it.
-		if err != nil && terminalErr != nil && !errors.Is(err, terminalErr) {
-			err = errors.Join(terminalErr, err)
+		if err != nil && schemaErr != nil && !errors.Is(err, schemaErr) {
+			err = errors.Join(schemaErr, err)
 		}
 	}()
 	start := int(a.position.Load())
@@ -179,8 +177,9 @@ func (a *fallbackAgent) Run(ctx context.Context, opts RunOpts) (result *Result, 
 			return result, nil
 		}
 		lastErr = err
-		if terminalErr == nil && IsTerminalProviderError(err) {
-			terminalErr = err
+		var inc *codexSchemaIncompatibility
+		if schemaErr == nil && errors.As(err, &inc) {
+			schemaErr = err
 		}
 		// A fallback is another attempt inside this invocation's existing
 		// bounded context, not a fresh timeout policy. Once that context has

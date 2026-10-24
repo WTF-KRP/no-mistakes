@@ -296,6 +296,88 @@ func main() {
 	}
 }
 
+func TestExecutor_AgentCrashRetryAfterTerminalClaudeAndCodexCrash(t *testing.T) {
+	dir := t.TempDir()
+	source := filepath.Join(dir, "claude.go")
+	bin := filepath.Join(dir, "claude.exe")
+	attempts := filepath.Join(dir, "attempts")
+	const fakeClaude = `package main
+import (
+ "fmt"
+ "os"
+)
+func main() {
+ f, err := os.OpenFile(os.Getenv("NM_TEST_CLAUDE_ATTEMPTS"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
+ if err != nil { panic(err) }
+ if _, err := f.WriteString("attempt\n"); err != nil { panic(err) }
+ if err := f.Close(); err != nil { panic(err) }
+ fmt.Println("{\"type\":\"result\",\"subtype\":\"error_during_execution\",\"is_error\":true,\"api_error_status\":400,\"result\":\"invalid request\"}")
+ os.Exit(1)
+}
+`
+	if err := os.WriteFile(source, []byte(fakeClaude), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if output, err := exec.Command("go", "build", "-o", bin, source).CombinedOutput(); err != nil {
+		t.Fatalf("build fake Claude: %v\n%s", err, output)
+	}
+	claude, err := agent.New(types.AgentClaude, bin, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondCalls := 0
+	codex := &hangingAgent{name: "codex", runFn: func(context.Context, agent.RunOpts) (*agent.Result, error) {
+		secondCalls++
+		return nil, processExitError{"codex exited: fallback crash diagnostic"}
+	}}
+	database, p, _, repo := setupTest(t)
+	work := t.TempDir()
+	initGitRepo(t, work)
+	head, err := git.HeadSHA(context.Background(), work)
+	if err != nil {
+		t.Fatal(err)
+	}
+	run, err := database.InsertRun(repo.ID, "claude-fallback-crash", head, head)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stepCalls := 0
+	terminalClaudeAttempts := 0
+	step := &adaptiveCallStep{name: types.StepReview, fn: func(sctx *StepContext) (*StepOutcome, error) {
+		stepCalls++
+		_, err := sctx.RunAgent(agent.RunOpts{
+			CWD: work, Prompt: "review",
+			Env: []string{"NM_TEST_CLAUDE_ATTEMPTS=" + attempts},
+			OnAttempt: func(attempt agent.Attempt) {
+				if attempt.Agent == "claude" {
+					if !agent.IsTerminalProviderError(attempt.Err) {
+						t.Errorf("Claude error = %v, want terminal provider error", attempt.Err)
+					} else {
+						terminalClaudeAttempts++
+					}
+				}
+			},
+		})
+		if agent.IsTerminalProviderError(err) {
+			t.Errorf("RunAgent error = %v, want only the fallback crash", err)
+		}
+		return &StepOutcome{}, err
+	}}
+	executor := NewExecutor(database, p, &config.Config{AgentCrashRetries: 1}, agent.NewFallback([]agent.Agent{claude, codex}), []Step{step}, nil)
+	execErr := executor.Execute(context.Background(), run, repo, work)
+	const diagnostic = "step review failed: codex exited: fallback crash diagnostic"
+	if execErr == nil || execErr.Error() != diagnostic || errString(executor, run.ID) != diagnostic {
+		t.Fatalf("fallback diagnostic changed: error=%v persisted=%s", execErr, errString(executor, run.ID))
+	}
+	data, err := os.ReadFile(attempts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stepCalls != 2 || secondCalls != 2 || terminalClaudeAttempts != 2 || string(data) != "attempt\nattempt\n" {
+		t.Fatalf("fallback crash did not use its retry: step calls=%d Codex calls=%d terminal Claude attempts=%d subprocess attempts=%q", stepCalls, secondCalls, terminalClaudeAttempts, data)
+	}
+}
+
 func boolInt(value bool) int {
 	if value {
 		return 1

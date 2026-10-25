@@ -19,16 +19,16 @@ func (e *Executor) validateSkippedReview(run *db.Run, repo *db.Repo) error {
 		return fmt.Errorf("validate skipped review: read step plan: %w", err)
 	}
 	var review *db.StepResult
-	publicationScheduled := false
+	pushScheduled := false
 	for _, result := range results {
 		if result.StepName == types.StepReview && result.Status == types.StepStatusSkipped {
 			review = result
 		}
-		if (result.StepName == types.StepPush || result.StepName == types.StepPR) && result.Status != types.StepStatusSkipped && result.Status != types.StepStatusCompleted {
-			publicationScheduled = true
+		if result.StepName == types.StepPush && result.Status != types.StepStatusSkipped && result.Status != types.StepStatusCompleted {
+			pushScheduled = true
 		}
 	}
-	if review == nil || !publicationScheduled {
+	if review == nil || !pushScheduled {
 		return nil
 	}
 	durable, err := e.db.GetRun(run.ID)
@@ -41,7 +41,7 @@ func (e *Executor) validateSkippedReview(run *db.Run, repo *db.Repo) error {
 	if durable.ReviewApprovedHeadSHA != nil && strings.TrimSpace(*durable.ReviewApprovedHeadSHA) != "" {
 		return nil
 	}
-	err = fmt.Errorf("review skip prevents publication: run has no durably recorded review-approved head while Push or PR is scheduled; rerun Review and use --action approve to decline findings, or --action fix with --ignore to decline individual findings")
+	err = fmt.Errorf("review skip prevents push: run has no durably recorded review-approved head while Push is scheduled; rerun Review and use --action approve to decline findings, or --action fix with --ignore to decline individual findings")
 	duration := recoveredStepDuration(review)
 	if dbErr := e.db.FailStep(review.ID, err.Error(), duration); dbErr != nil {
 		return fmt.Errorf("record review-skip failure: %w", dbErr)

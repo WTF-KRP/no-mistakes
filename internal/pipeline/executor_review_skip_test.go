@@ -69,19 +69,20 @@ func TestExecutor_ReviewSkipStopsBeforeDownstreamWork(t *testing.T) {
 }
 
 func TestExecutor_ReviewSkipLegitimateContinuations(t *testing.T) {
-	for _, scenario := range []string{"no publication", "publication skipped", "durable approval", "approve", "ignore", "non-review skip", "pr only"} {
+	for _, scenario := range []string{"no publication", "publication skipped", "durable approval", "approve", "ignore", "non-review skip", "pr only", "push skipped", "review and push skipped"} {
 		t.Run(scenario, func(t *testing.T) {
 			database, p, run, repo := setupTest(t)
 			review := newApprovalStep(types.StepReview, `{"findings":[{"id":"r1","severity":"warning","description":"optional change","action":"auto-fix"}]}`)
 			review.outcome.ReviewApprovedHeadSHA = run.HeadSHA
 			testStep, document := newPassStep(types.StepTest), newPassStep(types.StepDocument)
+			lint := newPassStep(types.StepLint)
 			push, pr := newPassStep(types.StepPush), newPassStep(types.StepPR)
-			steps := []Step{review, testStep, document, push, pr}
+			steps := []Step{review, testStep, document, lint, push, pr}
 			if scenario == "no publication" {
-				steps = steps[:3]
+				steps = steps[:4]
 			}
 			if scenario == "pr only" {
-				steps = []Step{review, testStep, document, pr}
+				steps = []Step{review, testStep, document, lint, pr}
 			}
 			if scenario == "durable approval" {
 				// Intentionally leave the caller's Run stale. The DB owns authority.
@@ -107,6 +108,12 @@ func TestExecutor_ReviewSkipLegitimateContinuations(t *testing.T) {
 			if scenario == "publication skipped" {
 				executor.SetSkippedSteps([]types.StepName{types.StepPush, types.StepPR})
 			}
+			if scenario == "push skipped" {
+				executor.SetSkippedSteps([]types.StepName{types.StepPush})
+			}
+			if scenario == "review and push skipped" {
+				executor.SetSkippedSteps([]types.StepName{types.StepReview, types.StepPush})
+			}
 			done, _ := startExecutor(t, executor, run, repo, t.TempDir())
 			action := types.ActionSkip
 			if scenario == "approve" {
@@ -120,24 +127,20 @@ func TestExecutor_ReviewSkipLegitimateContinuations(t *testing.T) {
 				if err := executor.Respond(types.StepTest, types.ActionSkip, nil); err != nil {
 					t.Fatal(err)
 				}
-			} else {
+			} else if scenario != "review and push skipped" {
 				respondReviewSkipTest(t, executor, done, action)
 				if scenario == "ignore" {
 					respondReviewSkipTest(t, executor, done, types.ActionApprove)
 				}
 			}
-			if scenario == "pr only" {
-				if err := <-done; err == nil {
-					t.Fatal("a scheduled PR must require review authority even without Push")
-				}
-				if testStep.callCount() != 0 || document.callCount() != 0 || pr.callCount() != 0 {
-					t.Fatal("PR-only publication ran downstream work after Review skip")
-				}
-				return
-			}
 			waitExecutorDone(t, done)
-			if testStep.callCount() != 1 || document.callCount() != 1 {
+			if testStep.callCount() != 1 || document.callCount() != 1 || lint.callCount() != 1 {
 				t.Fatal("legitimate continuation did not execute downstream steps")
+			}
+			if scenario == "pr only" || scenario == "push skipped" || scenario == "review and push skipped" {
+				if push.callCount() != 0 || pr.callCount() != 1 {
+					t.Fatalf("continuation without Push: push=%d pr=%d", push.callCount(), pr.callCount())
+				}
 			}
 		})
 	}

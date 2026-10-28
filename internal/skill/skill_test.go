@@ -292,10 +292,14 @@ func TestInstallOverwritesStaleContent(t *testing.T) {
 }
 
 // The public package contract is a short entry point linking to four documents.
-// Exercise an upgrade with both stale files and missing files, then follow a
-// recovery link through each logical agent installation.
+// Exercise init's user-level installation entry point twice with both stale
+// files and missing files, then follow a recovery link through each logical
+// agent installation. This is an automated installer test, not a live CLI run.
 func TestInstallRefreshesCompleteSkillSet(t *testing.T) {
 	root := t.TempDir()
+	// Isolate os.UserHomeDir on both Unix and Windows.
+	t.Setenv("HOME", root)
+	t.Setenv("USERPROFILE", root)
 	paths := []string{
 		"SKILL.md",
 		"references/getting-started.md",
@@ -303,7 +307,7 @@ func TestInstallRefreshesCompleteSkillSet(t *testing.T) {
 		"references/recovery.md",
 		"references/commands.md",
 	}
-	if _, err := Install(root); err != nil {
+	if _, err := InstallUser(); err != nil {
 		t.Fatal(err)
 	}
 	for _, base := range InstallBases {
@@ -323,7 +327,7 @@ func TestInstallRefreshesCompleteSkillSet(t *testing.T) {
 			}
 		}
 	}
-	written, err := Install(root)
+	written, err := InstallUser()
 	if err != nil {
 		t.Fatal(err)
 	}

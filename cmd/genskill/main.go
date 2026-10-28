@@ -1,12 +1,12 @@
 // Command genskill renders the canonical no-mistakes skill and references from
 // the internal/skill package under skills/no-mistakes. The same rendering
 // is what `no-mistakes init` installs into the user-level agent skill
-// directories, so the committed file and the installed copies never drift.
+// directories, so the committed files and the installed copies never drift.
 //
 // Usage:
 //
-//	go run ./cmd/genskill           # (re)write the skill file
-//	go run ./cmd/genskill --check   # fail if the committed file is stale
+//	go run ./cmd/genskill           # (re)write the skill and references
+//	go run ./cmd/genskill --check   # fail if any committed document is stale
 //
 // The --check form is meant for CI so the committed skill never drifts from
 // the generator, which is the single source of truth.

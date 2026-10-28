@@ -63,8 +63,8 @@ func Files() []File {
 }
 
 // body is the Markdown instructions an agent reads when the skill activates.
-// Keep it focused: the operating loop, the command vocabulary, and how to read
-// the TOON output. Do not embed live state here - the skill is static.
+// Keep the operating loop and safety rules here, with detailed procedures in
+// linked references. Do not embed live state here - the skill is static.
 const body = `
 # no-mistakes
 

@@ -55,7 +55,7 @@ func TestBodyIncludesGeneratedGateStepGuard(t *testing.T) {
 
 func TestBodyDocumentsTaskFirstFlow(t *testing.T) {
 	// Check the generated, installed skill's guidance contract.
-	md := gettingStarted
+	md := skillReference(t, "getting-started")
 	for _, want := range []string{
 		"## Two ways to invoke",
 		"feature branch",
@@ -75,7 +75,7 @@ func TestBodyDocumentsTaskFirstFlow(t *testing.T) {
 // These expectations pin the task-first writing contract, independently of
 // the shared constant used by the renderer. They do not test model behavior.
 func TestBodyDocumentsIndependentTestOracles(t *testing.T) {
-	md := strings.Join(strings.Fields(gettingStarted), " ")
+	md := strings.Join(strings.Fields(skillReference(t, "getting-started")), " ")
 	for _, want := range []string{
 		"Use an independent oracle",
 		"expected result must come from somewhere other than the code under test",
@@ -91,7 +91,7 @@ func TestBodyDocumentsIndependentTestOracles(t *testing.T) {
 }
 
 func TestBodyDocumentsAxiGateGuidance(t *testing.T) {
-	md := gettingStarted + gates
+	md := skillReference(t, "getting-started") + skillReference(t, "gates")
 	for _, want := range []string{
 		"inspect it with `no-mistakes axi status`",
 		"drive it with `no-mistakes axi respond`",
@@ -108,6 +108,18 @@ func TestBodyDocumentsAxiGateGuidance(t *testing.T) {
 	if strings.Contains(md, "drive it to an outcome with `axi respond`") {
 		t.Errorf("body should not tell agents to resume non-parked runs with axi respond")
 	}
+}
+
+func skillReference(t *testing.T, name string) string {
+	t.Helper()
+	path := "references/" + name + ".md"
+	for _, file := range Files() {
+		if file.Path == path {
+			return file.Content
+		}
+	}
+	t.Fatalf("skill reference %s is missing", path)
+	return ""
 }
 
 func TestInstallWritesBothPaths(t *testing.T) {
